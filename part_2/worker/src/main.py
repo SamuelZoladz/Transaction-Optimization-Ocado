@@ -50,25 +50,29 @@ def transations_optimization(data):
     return transaction_optimization.calculate_transfers(debtors_list, creditors_list)
 
 
+def main():
+    try:
+        response = sqs.receive_message(QueueUrl=WORKER_QUEUE_URL, MaxNumberOfMessages=1, WaitTimeSeconds=20)
+        if 'Messages' in response:
+            message = response['Messages'][0]
+            debts_id = json.loads(message['Body'])["debts_id"]
+            logger.info(f"Statred debts_id: {str(debts_id)} processing")
+            try:
+                data = read_transaction_data_from_s3(debts_id)
+                optimized_transations = transations_optimization(data)
+                optimized_transations_csv = '\n'.join(
+                    ','.join(map(str, transaction)) for transaction in optimized_transations)
+                save_to_s3(optimized_transations_csv, debts_id)
+                logger.info(f"Finished processing debts_id: {str(debts_id)}")
+            except Exception as e:
+                logger.error(f"Processing failed for debts_id: {debts_id}. Error: {e}")
+            finally:
+                sqs.delete_message(QueueUrl=WORKER_QUEUE_URL, ReceiptHandle=message['ReceiptHandle'])
+    except Exception as e:
+        logger.error(f"Error in message handling: {e}")
+
+
 if __name__ == "__main__":
     logger.info("Worker started")
     while True:
-        try:
-            response = sqs.receive_message(QueueUrl=WORKER_QUEUE_URL, MaxNumberOfMessages=1, WaitTimeSeconds=20)
-            if 'Messages' in response:
-                message = response['Messages'][0]
-                debts_id = json.loads(message['Body'])["debts_id"]
-                logger.info(f"Statred debts_id: {str(debts_id)} processing")
-                try:
-                    data = read_transaction_data_from_s3(debts_id)
-                    optimized_transations = transations_optimization(data)
-                    optimized_transations_csv = '\n'.join(
-                        ','.join(map(str, transaction)) for transaction in optimized_transations)
-                    save_to_s3(optimized_transations_csv, debts_id)
-                    logger.info(f"Finished processing debts_id: {str(debts_id)}")
-                except Exception as e:
-                    logger.error(f"Processing failed for debts_id: {debts_id}. Error: {e}")
-                finally:
-                    sqs.delete_message(QueueUrl=WORKER_QUEUE_URL, ReceiptHandle=message['ReceiptHandle'])
-        except Exception as e:
-            logger.error(f"Error in message handling: {e}")
+        main()
